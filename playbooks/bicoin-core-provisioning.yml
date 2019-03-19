@@ -1,0 +1,172 @@
+# Pre-requisite for Ubuntu 16.04:
+#   $ ssh REMOTE_HOST "sudo apt-get install python-minimal aptitude -y"
+#
+# Run provisioning
+#
+#   $ ansible-playbook -v -i hosts --limit=bitcoin-core bicoin-core-provisioning.yml
+#
+
+- hosts: servers
+
+  vars:
+      usergroup: "{{username}}"
+      home: "/home/{{username}}"
+
+  #remote_user: root
+
+  tasks:
+
+      - fail:
+            msg="This playbook requires Ansible 2.x or greater."
+        when: ansible_version.major < 2
+
+      - name: Install required packages
+        become: true
+        apt:
+            name: "{{item}}"
+            state: present
+        with_items:
+            - build-essential
+            - libtool
+            - autotools-dev
+            - automake
+            - pkg-config
+            - libssl-dev
+            - libevent-dev
+            - bsdmainutils
+            - python3
+
+      - name: Install boost development packages
+        become: true
+        apt:
+            name: "{{item}}"
+            state: present
+        with_items:
+            - libboost-system-dev
+            - libboost-filesystem-dev
+            - libboost-chrono-dev
+            - libboost-program-options-dev
+            - libboost-test-dev
+            - libboost-thread-dev
+
+      - name: Add db4.8 repo
+        become: true
+        apt_repository:
+            repo: ppa:bitcoin/bitcoin
+            state: present
+            update_cache: true
+
+      - name: Install db4.8 packages
+        become: true
+        apt:
+            name: "{{item}}"
+            state: present
+        with_items:
+            - software-properties-common
+            - libdb4.8-dev
+            - libdb4.8++-dev
+
+      - name: Add user group
+        become: true
+        action: group name={{usergroup}}
+
+      - name: Add user
+        become: true
+        user: >
+          name={{username}}
+          group={{usergroup}}
+          home={{home}}/
+          shell=/bin/bash
+          generate_ssh_key=no
+          state=present
+
+      - name: Clone bincoin-core git repo
+        become: true
+        become_user: "{{username}}"
+        git:
+            repo: 'https://github.com/bitcoin/bitcoin.git'
+            dest: "{{home}}/bitcoin"
+            version: 0.15
+
+      - name: Compile Bitcoin-core
+        become: true
+        become_user: "{{username}}"
+        shell: "{{item}}"
+        args:
+            chdir: "{{home}}/bitcoin"
+        with_items:
+            - ./autogen.sh
+            - ./configure
+            - make
+
+      - name: Install Bitcoin-core
+        become: true
+        shell: "{{item}}"
+        args:
+            chdir: "{{home}}/bitcoin"
+        with_items:
+            - make install
+
+      - name: Create ".bitcoin" directory
+        become: true
+        become_user: "{{username}}"
+        file:
+            path: "{{home}}/.bitcoin"
+            state: directory
+
+      - name: Create default config file
+        become: true
+        become_user: "{{username}}"
+        template:
+            src: bitcoin.conf
+            dest: "{{home}}/.bitcoin/bitcoin.conf"
+            owner: "{{username}}"
+            group: "{{usergroup}}"
+            mode: '0600'
+            force: false
+
+      - name: Create sample config file
+        become: true
+        become_user: "{{username}}"
+        template:
+            src: bitcoin.conf
+            dest: "{{home}}/.bitcoin/bitcoin.conf.sample"
+            owner: "{{username}}"
+            group: "{{usergroup}}"
+            mode: '0600'
+            force: true
+
+      #
+      # See: https://github.com/bitcoin/bitcoin/blob/master/doc/init.md
+      # On ubuntu, we use Systemd, but note that service config file
+      # should be placed in "/lib/systemd/system" instead of "/usr/lib/systemd/system"
+      #
+      # Installing this bitcoind.service file consists of just copying it to
+      # /usr/lib/systemd/system directory, followed by the command
+      #     systemctl daemon-reload
+      # in order to update running systemd configuration.
+      #
+      # To test, run::
+      #       systemctl start bitcoind
+      #
+      # and to enable for system startup run::
+      #       systemctl enable bitcoind
+      #
+
+      - name: Configure bitcoind as service
+        become: true
+        template:
+            src: bitcoind.service
+            dest: /lib/systemd/system
+            force: true
+        notify: Enable bitcoind
+        tags: service
+
+  handlers:
+
+      - name: Enable bitcoind
+        become: true
+        service:
+            name: bitcoind
+            enabled: true
+            state: started

@@ -1,0 +1,11 @@
+[servers:children]
+bitcoin-core
+go-ethereum
+
+[bitcoin-core]
+#wallet-btc01      username=bth01
+wallet-btc01      username=btc01
+
+[go-ethereum]
+wallet-eth01      username=eth01
+#wallet-eth02      username=eth02

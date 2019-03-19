@@ -1,0 +1,15 @@
+[Unit]
+Description=geth Ethereum daemon
+Requires=network.target
+
+[Service]
+### Type=forking
+Type=simple
+### User=%I
+User={{username}}
+### ExecStart=/home/USERNAME/go-ethereum/build/bin/geth
+ExecStart=/usr/bin/geth
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

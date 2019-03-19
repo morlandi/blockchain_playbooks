@@ -1,0 +1,138 @@
+# Pre-requisite for Ubuntu 16.04:
+#   $ ssh REMOTE_HOST "sudo apt-get install python-minimal aptitude -y"
+#
+# Run provisioning
+#
+#   $ ansible-playbook -v -i hosts --limit=go-ethereum go-ethereum-provisioning.yml
+#
+
+- hosts: servers
+
+  vars:
+      usergroup: "{{username}}"
+      home: "/home/{{username}}"
+
+  tasks:
+
+      - fail:
+            msg="This playbook requires Ansible 2.x or greater."
+        when: ansible_version.major < 2
+
+      - name: Add ethereum repo
+        become: true
+        apt_repository:
+            repo: ppa:ethereum/ethereum
+            state: present
+            update_cache: true
+
+      - name: Install required packages
+        become: true
+        apt:
+            name: "{{item}}"
+            state: present
+        with_items:
+            - software-properties-common
+            - ethereum
+            - build-essential
+
+      - name: Add user group
+        become: true
+        action: group name={{usergroup}}
+
+      - name: Add user
+        become: true
+        user: >
+          name={{username}}
+          group={{usergroup}}
+          home={{home}}
+          shell=/bin/bash
+          generate_ssh_key=no
+          state=present
+
+      - name: Check if go is installed
+        stat:
+            path: /usr/local/go
+        register: go_install_folder
+
+      - name: Download the Go language binary archive file
+        become: true
+        unarchive:
+            src: https://storage.googleapis.com/golang/go1.9.2.linux-amd64.tar.gz
+            dest: /usr/local
+            remote_src: yes
+        when: go_install_folder.stat.exists == False
+
+      - name: Create local "go" directory
+        become: true
+        become_user: "{{username}}"
+        file:
+            path: "{{home}}/go"
+            state: directory
+
+      - name: Setup Go Environment (bashrc)
+        become: true
+        become_user: "{{username}}"
+        lineinfile:
+            dest: "{{home}}/.bashrc"
+            line: "{{item.line}}"
+            regexp: "{{item.regexp}}"
+            state: present
+            insertafter: EOF
+        with_items:
+            - {line: 'export GOROOT=/usr/local/go', regexp: 'export GOROOT='}
+            - {line: 'export GOPATH={{home}}/go', regexp: 'export GOPATH='}
+            - {line: 'export PATH=$GOPATH/bin:$GOROOT/bin:$PATH', regexp: 'export PATH='}
+
+      - name: Clone go-ethereum git repo
+        become: true
+        become_user: "{{username}}"
+        git:
+            repo: 'https://github.com/ethereum/go-ethereum'
+            dest: "{{home}}/go-ethereum"
+            version: v1.7.3
+
+      - name: Compile go-ethereum
+        become: true
+        become_user: "{{username}}"
+        shell: "{{item}}"
+        args:
+            chdir: "{{home}}/go-ethereum"
+        environment:
+            PATH: "/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games"
+            GOROOT: "/usr/local/go"
+        with_items:
+            #- make geth
+            - make all
+
+      # Adapted from:
+      # https://ethereum.stackexchange.com/questions/1725/is-there-the-start-stop-script-of-geth-after-debian-ubuntu-booting#2247
+      #
+      # Installing this geth.service file consists of just copying it to
+      # /usr/lib/systemd/system directory, followed by the command
+      #     systemctl daemon-reload
+      # in order to update running systemd configuration.
+      #
+      # To test, run::
+      #       systemctl start geth
+      #
+      # and to enable for system startup run::
+      #       systemctl enable geth
+      #
+
+      - name: Configure geth as service
+        become: true
+        template:
+            src: geth.service
+            dest: /lib/systemd/system
+            force: true
+        notify: Enable geth service
+        tags: service
+
+  handlers:
+
+      - name: Enable geth service
+        become: true
+        service:
+            name: geth
+            enabled: true
+            state: started
